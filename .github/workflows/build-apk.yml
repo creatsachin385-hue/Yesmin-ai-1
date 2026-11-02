@@ -1,0 +1,79 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Gradle 8.4
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.4'
+
+      - name: Extract ZIP files if present
+        run: |
+          shopt -s nullglob
+          for f in *.zip; do
+            if [ -f "$f" ]; then
+              echo "Extracting $f..."
+              unzip -o "$f"
+            fi
+          done
+          # If files are in a subfolder, bring them to root
+          if [ ! -d "android" ]; then
+            SUB_ANDROID=$(find . -maxdepth 3 -type d -name "android" | head -n 1)
+            if [ -n "$SUB_ANDROID" ]; then
+              PARENT=$(dirname "$SUB_ANDROID")
+              cp -rn "$PARENT"/* . || true
+            fi
+          fi
+
+      - name: Build Web Dist
+        run: |
+          if [ -f "package.json" ]; then
+            npm install --legacy-peer-deps || true
+            npm run build || npx vite build || true
+          fi
+          mkdir -p android/app/src/main/assets/dist
+          if [ -d "dist" ]; then
+            cp -r dist/* android/app/src/main/assets/dist/ || true
+          fi
+
+      - name: Configure Android SDK
+        run: |
+          mkdir -p "$HOME/.android"
+          touch "$HOME/.android/repositories.cfg"
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+      - name: Build APK with Gradle
+        run: |
+          cd android
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yesmin-AI-Assistant-GalaxyTab-APK
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
