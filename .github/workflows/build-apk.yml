@@ -1,37 +1,44 @@
-name: Build Android APK
+name: Build Android APK from ZIP
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build-apk:
+  build-android-apk:
     name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Setup Gradle 8.4
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.4'
 
-      - name: Extract ZIP files if present
+      - name: Unpack ZIP & Prepare Project Structure
         run: |
+          echo "=== Step 1: Listing repository files ==="
+          ls -la
+
+          # Extract ZIP if present
           shopt -s nullglob
           for f in *.zip; do
             if [ -f "$f" ]; then
@@ -39,41 +46,57 @@ jobs:
               unzip -o "$f"
             fi
           done
-          # If files are in a subfolder, bring them to root
+
+          # Relocate nested android folder if inside a subfolder
           if [ ! -d "android" ]; then
-            SUB_ANDROID=$(find . -maxdepth 3 -type d -name "android" | head -n 1)
-            if [ -n "$SUB_ANDROID" ]; then
-              PARENT=$(dirname "$SUB_ANDROID")
-              cp -rn "$PARENT"/* . || true
+            NESTED_ANDROID=$(find . -maxdepth 4 -type d -name "android" | head -n 1)
+            if [ -n "$NESTED_ANDROID" ]; then
+              PARENT_DIR=$(dirname "$NESTED_ANDROID")
+              echo "Relocating files from $PARENT_DIR to current directory..."
+              cp -rn "$PARENT_DIR"/* . || true
             fi
           fi
 
-      - name: Build Web Dist
+          echo "=== Step 2: Verifying android directory ==="
+          if [ -d "android" ]; then
+            ls -la android
+          else
+            echo "Warning: android directory not found!"
+          fi
+
+      - name: Install Node Dependencies
         run: |
           if [ -f "package.json" ]; then
             npm install --legacy-peer-deps || true
+          fi
+
+      - name: Build Web Application
+        run: |
+          if [ -f "package.json" ]; then
             npm run build || npx vite build || true
           fi
+
+      - name: Copy Web Dist to Android Assets
+        run: |
           mkdir -p android/app/src/main/assets/dist
           if [ -d "dist" ]; then
             cp -r dist/* android/app/src/main/assets/dist/ || true
           fi
 
-      - name: Configure Android SDK
+      - name: Setup Android SDK Local Properties
         run: |
-          mkdir -p "$HOME/.android"
-          touch "$HOME/.android/repositories.cfg"
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Build APK with Gradle
+      - name: Build Android APK
         run: |
           cd android
           gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK Artifact
+      - name: Upload Built APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Yesmin-AI-Assistant-GalaxyTab-APK
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: Yesmin-AI-GalaxyTab-APK
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/**/*.apk
           retention-days: 30
